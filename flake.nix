@@ -12,23 +12,12 @@
         "x86_64-darwin"
         "aarch64-darwin"
       ];
-      forAllSystems =
-        function: nixpkgs.lib.genAttrs systems (system: function (import nixpkgs { inherit system; }));
+
+      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
     in
     {
       devShells = forAllSystems (pkgs: {
-        default = pkgs.mkShell {
-
-          packages = with pkgs; [
-
-          ];
-
-          buildInputs = with pkgs; [ pkg-config ];
-
-          shellHook = ''
-            echo "DevShell🚀: initiated"
-          '';
-        };
+        default = import ./pg/shell.nix { inherit pkgs; };
       });
     };
 }
