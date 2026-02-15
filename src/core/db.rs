@@ -165,7 +165,7 @@ fn format_schema(rows: Vec<(String, String, String)>) -> String {
     }
 
     if !current_table.is_empty() {
-        result.push_str(")");
+        result.push(')');
     }
 
     result

@@ -19,5 +19,15 @@
       devShells = forAllSystems (pkgs: {
         default = import ./nix/shell.nix { inherit pkgs; };
       });
+
+      checks = forAllSystems (pkgs: {
+        devShell = pkgs.mkShell {
+          packages = [
+            # pkgs.rustc
+            # pkgs.cargo
+
+          ];
+        };
+      });
     };
 }
