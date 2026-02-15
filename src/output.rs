@@ -1,18 +1,21 @@
-use crate::db::QueryResult;
+// output formatting - pretty tables or raw json
+
+use crate::core::QueryResult;
 
 pub struct Output;
 
 impl Output {
+    // nice table format for humans
     pub fn pretty(sql: &str, result: &QueryResult) {
-        println!("SQL: {sql}\n");
-        println!("Rows: {}\n", result.row_count);
+        println!("sql: {sql}\n");
+        println!("rows: {}\n", result.row_count);
 
         if result.rows.is_empty() {
-            println!("No results.");
+            println!("no results");
             return;
         }
 
-        // Calculate column widths
+        // figure out column widths
         let mut widths: Vec<usize> = result.columns.iter().map(|c| c.len()).collect();
 
         for row in &result.rows {
@@ -24,14 +27,14 @@ impl Output {
             }
         }
 
-        // Cap widths at 40 chars
+        // cap at 40 so things don't get crazy
         for w in &mut widths {
             if *w > 40 {
                 *w = 40;
             }
         }
 
-        // Print header
+        // header
         let header: Vec<String> = result
             .columns
             .iter()
@@ -40,11 +43,11 @@ impl Output {
             .collect();
         println!("{}", header.join(" | "));
 
-        // Print separator
+        // separator
         let sep: Vec<String> = widths.iter().map(|w| "-".repeat(*w)).collect();
         println!("{}", sep.join("-+-"));
 
-        // Print rows
+        // rows
         for row in &result.rows {
             let formatted: Vec<String> = row
                 .iter()
@@ -63,6 +66,7 @@ impl Output {
         }
     }
 
+    // raw json for scripts
     pub fn raw(result: &QueryResult) {
         println!("{}", serde_json::to_string(result).unwrap_or_default());
     }
@@ -70,7 +74,7 @@ impl Output {
 
 fn format_value(val: &serde_json::Value) -> String {
     match val {
-        serde_json::Value::Null => "NULL".to_string(),
+        serde_json::Value::Null => "null".to_string(),
         serde_json::Value::String(s) => s.clone(),
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::Bool(b) => b.to_string(),

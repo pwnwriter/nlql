@@ -1,13 +1,12 @@
-mod ai;
-mod db;
+// nlql library - natural language to sql
+
+pub mod cli;
+mod core;
 mod error;
 mod output;
-mod safety;
 mod server;
 
-pub use ai::Claude;
-pub use db::Db;
+pub use core::{Claude, Db, QueryResult, Safety};
 pub use error::Error;
 pub use output::Output;
-pub use safety::Safety;
 pub use server::Server;

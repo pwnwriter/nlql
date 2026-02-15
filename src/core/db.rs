@@ -1,6 +1,9 @@
+// database connection and query execution
+// supports postgres, sqlite, and mysql
+
 use crate::Error;
 use serde::Serialize;
-use sqlx::{AnyPool, Column, Row, any::AnyPoolOptions};
+use sqlx::{any::AnyPoolOptions, AnyPool, Column, Row};
 
 pub struct Db {
     pool: AnyPool,
@@ -14,10 +17,17 @@ pub struct QueryResult {
     pub row_count: usize,
 }
 
+enum Dialect {
+    Postgres,
+    Sqlite,
+    Mysql,
+}
+
 impl Db {
     pub async fn connect(url: &str) -> Result<Self, Error> {
         sqlx::any::install_default_drivers();
 
+        // figure out which database we're talking to
         let dialect = detect_dialect(url);
 
         let pool = AnyPoolOptions::new()
@@ -28,25 +38,21 @@ impl Db {
         Ok(Self { pool, dialect })
     }
 
+    // get table and column info so claude knows what to query
     pub async fn schema(&self) -> Result<String, Error> {
-        let tables = match self.dialect {
-            Dialect::Postgres => self.postgres_schema().await?,
-            Dialect::Sqlite => self.sqlite_schema().await?,
-            Dialect::Mysql => self.mysql_schema().await?,
-        };
-
-        Ok(tables)
+        match self.dialect {
+            Dialect::Postgres => self.postgres_schema().await,
+            Dialect::Sqlite => self.sqlite_schema().await,
+            Dialect::Mysql => self.mysql_schema().await,
+        }
     }
 
     async fn postgres_schema(&self) -> Result<String, Error> {
         let rows: Vec<(String, String, String)> = sqlx::query_as(
-            r#"SELECT
-                table_name::text,
-                column_name::text,
-                data_type::text
-            FROM information_schema.columns
-            WHERE table_schema = 'public'
-            ORDER BY table_name, ordinal_position"#,
+            r#"SELECT table_name::text, column_name::text, data_type::text
+               FROM information_schema.columns
+               WHERE table_schema = 'public'
+               ORDER BY table_name, ordinal_position"#,
         )
         .fetch_all(&self.pool)
         .await?;
@@ -55,7 +61,6 @@ impl Db {
     }
 
     async fn sqlite_schema(&self) -> Result<String, Error> {
-        // Get all tables
         let tables: Vec<(String,)> = sqlx::query_as(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
         )
@@ -78,13 +83,10 @@ impl Db {
 
     async fn mysql_schema(&self) -> Result<String, Error> {
         let rows: Vec<(String, String, String)> = sqlx::query_as(
-            r#"SELECT
-                table_name,
-                column_name,
-                data_type
-            FROM information_schema.columns
-            WHERE table_schema = DATABASE()
-            ORDER BY table_name, ordinal_position"#,
+            r#"SELECT table_name, column_name, data_type
+               FROM information_schema.columns
+               WHERE table_schema = DATABASE()
+               ORDER BY table_name, ordinal_position"#,
         )
         .fetch_all(&self.pool)
         .await?;
@@ -92,6 +94,7 @@ impl Db {
         Ok(format_schema(rows))
     }
 
+    // run the sql and return results as json
     pub async fn execute(&self, sql: &str) -> Result<QueryResult, Error> {
         let rows = sqlx::query(sql).fetch_all(&self.pool).await?;
 
@@ -103,14 +106,12 @@ impl Db {
             });
         }
 
-        // Get column names
         let columns: Vec<String> = rows[0]
             .columns()
             .iter()
             .map(|c| c.name().to_string())
             .collect();
 
-        // Convert rows to JSON values
         let json_rows: Vec<Vec<serde_json::Value>> = rows
             .iter()
             .map(|row| {
@@ -136,12 +137,7 @@ impl Db {
     }
 }
 
-enum Dialect {
-    Postgres,
-    Sqlite,
-    Mysql,
-}
-
+// figure out dialect from connection string
 fn detect_dialect(url: &str) -> Dialect {
     if url.starts_with("postgres://") || url.starts_with("postgresql://") {
         Dialect::Postgres
@@ -152,6 +148,7 @@ fn detect_dialect(url: &str) -> Dialect {
     }
 }
 
+// turn schema rows into readable text for claude
 fn format_schema(rows: Vec<(String, String, String)>) -> String {
     let mut result = String::new();
     let mut current_table = String::new();
@@ -174,15 +171,16 @@ fn format_schema(rows: Vec<(String, String, String)>) -> String {
     result
 }
 
+// convert database values to json (handling type mismatches gracefully)
 fn row_value_to_json(row: &sqlx::any::AnyRow, index: usize) -> serde_json::Value {
     use sqlx::ValueRef;
 
-    // Check if null first
+    // null check first
     if row.try_get_raw(index).map(|v| v.is_null()).unwrap_or(true) {
         return serde_json::Value::Null;
     }
 
-    // Try different types in order of likelihood
+    // try types in order of how common they are
     if let Ok(v) = row.try_get::<String, _>(index) {
         return serde_json::Value::String(v);
     }
@@ -201,6 +199,6 @@ fn row_value_to_json(row: &sqlx::any::AnyRow, index: usize) -> serde_json::Value
         return serde_json::Value::Bool(v);
     }
 
-    // For unsupported types, return a placeholder
-    serde_json::Value::String("<unsupported type>".to_string())
+    // give up - some postgres types just don't work with the any driver
+    serde_json::Value::String("<unsupported>".to_string())
 }

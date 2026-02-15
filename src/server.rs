@@ -1,13 +1,16 @@
+// http server mode - run nlql as an api
+
 use axum::{
-    Json, Router,
     extract::State,
     http::StatusCode,
     routing::{get, post},
+    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
+use crate::core::QueryResult;
 use crate::{Claude, Db, Error, Safety};
 
 struct AppState {
@@ -28,7 +31,7 @@ struct QueryRequest {
 struct QueryResponse {
     sql: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<crate::db::QueryResult>,
+    result: Option<QueryResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     warning: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -52,12 +55,12 @@ impl Server {
         let app = Router::new()
             .route("/health", get(health))
             .route("/query", post(query))
-            .route("/schema", get(schema_handler))
+            .route("/schema", get(get_schema))
             .layer(CorsLayer::permissive())
             .with_state(state);
 
         let addr = format!("{host}:{port}");
-        println!("Starting server at http://{addr}");
+        println!("server running at http://{addr}");
 
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
@@ -75,7 +78,7 @@ async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
 
-async fn schema_handler(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+async fn get_schema(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     Json(serde_json::json!({ "schema": state.schema }))
 }
 
@@ -83,7 +86,7 @@ async fn query(
     State(state): State<Arc<AppState>>,
     Json(req): Json<QueryRequest>,
 ) -> (StatusCode, Json<QueryResponse>) {
-    // Generate SQL
+    // get claude ready
     let claude = match Claude::new() {
         Ok(c) => c,
         Err(e) => {
@@ -99,6 +102,7 @@ async fn query(
         }
     };
 
+    // generate the sql
     let sql = match claude.generate_sql(&req.prompt, &state.schema).await {
         Ok(s) => s,
         Err(e) => {
@@ -114,7 +118,7 @@ async fn query(
         }
     };
 
-    // Safety check
+    // check if it's safe
     let safety = Safety::check(&sql);
     if safety.is_dangerous && !req.run_dangerous {
         return (
@@ -123,12 +127,12 @@ async fn query(
                 sql,
                 result: None,
                 warning: None,
-                error: Some(format!("Dangerous query blocked: {}", safety.reason)),
+                error: Some(format!("blocked: {}", safety.reason)),
             }),
         );
     }
 
-    // Dry run - just return SQL
+    // just return sql if dry run
     if req.dry_run {
         return (
             StatusCode::OK,
@@ -141,7 +145,7 @@ async fn query(
         );
     }
 
-    // Execute
+    // run it
     match state.db.execute(&sql).await {
         Ok(result) => (
             StatusCode::OK,

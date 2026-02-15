@@ -1,3 +1,5 @@
+// claude integration - turns plain english into sql
+
 use crate::Error;
 use serde::{Deserialize, Serialize};
 
@@ -6,6 +8,7 @@ pub struct Claude {
     api_key: String,
 }
 
+// what we send to claude
 #[derive(Serialize)]
 struct Request {
     model: &'static str,
@@ -20,6 +23,7 @@ struct Message {
     content: String,
 }
 
+// what claude sends back
 #[derive(Deserialize)]
 struct Response {
     content: Vec<Content>,
@@ -32,7 +36,7 @@ struct Content {
 
 impl Claude {
     pub fn new() -> Result<Self, Error> {
-        // Try multiple common env var names
+        // check common env var names for the api key
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .or_else(|_| std::env::var("CLAUDE_API_KEY"))
             .or_else(|_| std::env::var("CLAUDE_KEY"))
@@ -45,6 +49,7 @@ impl Claude {
     }
 
     pub async fn generate_sql(&self, prompt: &str, schema: &str) -> Result<String, Error> {
+        // tell claude what we need and give it the schema
         let system = format!(
             r#"You are a SQL query generator. Given a natural language request, generate a valid SQL query.
 
@@ -92,7 +97,7 @@ Rules:
             .map(|c| c.text.trim().to_string())
             .unwrap_or_default();
 
-        // Clean up any markdown code blocks if present
+        // claude sometimes wraps sql in markdown code blocks
         let sql = sql
             .trim_start_matches("```sql")
             .trim_start_matches("```")
