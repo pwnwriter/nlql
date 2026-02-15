@@ -1,0 +1,96 @@
+name: integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  db-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: setup nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: setup rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: start postgres
+        run: |
+          nix develop --command bash -c '
+            export PGDATA="$PWD/.pg"
+            export PGHOST="$PGDATA"
+            export PGPORT=5432
+
+            # init and start
+            initdb -D "$PGDATA" --no-locale --encoding=UTF8
+            echo "unix_socket_directories = '\''$PGDATA'\''" >> "$PGDATA/postgresql.conf"
+            pg_ctl -D "$PGDATA" -l "$PGDATA/logfile" start
+
+            # wait for ready
+            for i in {1..30}; do
+              pg_isready -h "$PGDATA" && break
+              sleep 1
+            done
+
+            # create test db and tables
+            createdb nlql_test
+            psql nlql_test <<EOF
+              CREATE TABLE users (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(100) NOT NULL,
+                email VARCHAR(255),
+                role VARCHAR(50) DEFAULT '\''user'\'',
+                status VARCHAR(20) DEFAULT '\''active'\''
+              );
+
+              CREATE TABLE orders (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id),
+                amount DECIMAL(10,2),
+                status VARCHAR(20)
+              );
+
+              INSERT INTO users (name, email, role, status) VALUES
+                ('\''alice'\'', '\''alice@test.com'\'', '\''admin'\'', '\''active'\''),
+                ('\''bob'\'', '\''bob@test.com'\'', '\''user'\'', '\''active'\''),
+                ('\''charlie'\'', '\''charlie@test.com'\'', '\''user'\'', '\''inactive'\'');
+
+              INSERT INTO orders (user_id, amount, status) VALUES
+                (1, 100.00, '\''completed'\''),
+                (2, 50.00, '\''pending'\''),
+                (1, 200.00, '\''completed'\'');
+            EOF
+          '
+
+      - name: run db tests
+        run: |
+          export PGDATA="$PWD/.pg"
+          export PGHOST="$PGDATA"
+          export DATABASE_URL="postgres:///nlql_test?host=$PGDATA"
+
+          # test schema introspection
+          cargo run -- schema --db "$DATABASE_URL" | tee schema.json
+          grep -q "users" schema.json
+          grep -q "orders" schema.json
+
+          # test direct sql execution (bypass ai, test db layer)
+          cargo test --features test-db
+
+      - name: test safety checks
+        run: |
+          cargo test safety
+
+      - name: stop postgres
+        if: always()
+        run: |
+          if [ -d ".pg" ]; then
+            nix develop --command pg_ctl -D .pg stop || true
+          fi
