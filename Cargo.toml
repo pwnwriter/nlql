@@ -1,6 +1,29 @@
 [package]
 name = "nlql"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+description = "Natural Language to SQL using Claude AI"
 
 [dependencies]
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "any", "postgres", "sqlite", "mysql"] }
+
+# HTTP client (for Claude API)
+reqwest = { version = "0.12", features = ["json"] }
+
+# HTTP server
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
