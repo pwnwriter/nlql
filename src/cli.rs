@@ -1,10 +1,11 @@
 // command line interface - handles all user interaction
 
-use crate::{Claude, Db, Error, Output, Safety, Server};
+use crate::{Claude, Db, Output, Safety, Server};
 use clap::{Parser, Subcommand};
+use miette::{IntoDiagnostic, Result};
 
 #[derive(Parser)]
-#[command(name = "nlql", about = "talk to your database in plain english")]
+#[command(name = "nlql", about = "Talk to your database in plain english")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -69,7 +70,7 @@ enum OutputFormat {
     SqlOnly,
 }
 
-pub async fn run() -> Result<(), Error> {
+pub async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -82,7 +83,7 @@ pub async fn run() -> Result<(), Error> {
             run_dangerous,
         } => query(&prompt, &db, dry_run, output, no_check, run_dangerous).await,
 
-        Commands::Serve { db, port, host } => Server::run(&db, &host, port).await,
+        Commands::Serve { db, port, host } => Ok(Server::run(&db, &host, port).await?),
 
         Commands::Schema { db } => schema(&db).await,
     }
@@ -96,7 +97,7 @@ async fn query(
     output: OutputFormat,
     no_check: bool,
     run_dangerous: bool,
-) -> Result<(), Error> {
+) -> Result<()> {
     // connect and grab the schema so claude knows what tables exist
     let db = Db::connect(db_url).await?;
     let schema = db.schema().await?;
@@ -137,9 +138,9 @@ async fn query(
 }
 
 // dump the database schema as json
-async fn schema(db_url: &str) -> Result<(), Error> {
+async fn schema(db_url: &str) -> Result<()> {
     let db = Db::connect(db_url).await?;
     let schema = db.schema().await?;
-    println!("{}", serde_json::to_string_pretty(&schema)?);
+    println!("{}", serde_json::to_string_pretty(&schema).into_diagnostic()?);
     Ok(())
 }
