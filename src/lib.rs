@@ -3,10 +3,9 @@
 pub mod cli;
 mod core;
 mod error;
-mod output;
 mod server;
+pub mod tui;
 
 pub use core::{Claude, Db, QueryResult, Safety};
 pub use error::Error;
-pub use output::Output;
 pub use server::Server;

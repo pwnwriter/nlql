@@ -5,10 +5,10 @@ use thiserror::Error;
 
 #[derive(Error, Diagnostic, Debug)]
 pub enum Error {
-    #[error("couldn't connect to database")]
+    #[error("database error: {0}")]
     #[diagnostic(
-        code(nlql::db::connection),
-        help("check your connection string and make sure the database is running")
+        code(nlql::db::error),
+        help("check your query syntax and database connection")
     )]
     Database(#[from] sqlx::Error),
 

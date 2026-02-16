@@ -3,11 +3,13 @@
 
 use crate::Error;
 use serde::Serialize;
-use sqlx::{any::AnyPoolOptions, AnyPool, Column, Row};
+use sqlx::{AnyPool, Column, Row, any::AnyPoolOptions};
 
 pub struct Db {
     pool: AnyPool,
     dialect: Dialect,
+    host: String,
+    database: String,
 }
 
 #[derive(Serialize)]
@@ -29,13 +31,35 @@ impl Db {
 
         // figure out which database we're talking to
         let dialect = detect_dialect(url);
+        let (host, database) = parse_connection_url(url);
 
         let pool = AnyPoolOptions::new()
             .max_connections(5)
             .connect(url)
             .await?;
 
-        Ok(Self { pool, dialect })
+        Ok(Self {
+            pool,
+            dialect,
+            host,
+            database,
+        })
+    }
+
+    pub fn dialect_name(&self) -> &'static str {
+        match self.dialect {
+            Dialect::Postgres => "postgres",
+            Dialect::Sqlite => "sqlite",
+            Dialect::Mysql => "mysql",
+        }
+    }
+
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub fn database(&self) -> &str {
+        &self.database
     }
 
     // get table and column info so claude knows what to query
@@ -146,6 +170,44 @@ fn detect_dialect(url: &str) -> Dialect {
     } else {
         Dialect::Sqlite
     }
+}
+
+// parse host and database from connection url
+fn parse_connection_url(url: &str) -> (String, String) {
+    // sqlite: just use the file path
+    if !url.contains("://") || url.starts_with("sqlite:") {
+        let path = url.strip_prefix("sqlite:").unwrap_or(url);
+        let db_name = path.rsplit('/').next().unwrap_or(path);
+        return ("local".to_string(), db_name.to_string());
+    }
+
+    // postgres/mysql: scheme://user:pass@host:port/database
+    let without_scheme = url.split("://").nth(1).unwrap_or(url);
+
+    // get the part after @ (host:port/database)
+    let after_auth = if without_scheme.contains('@') {
+        without_scheme.split('@').nth(1).unwrap_or(without_scheme)
+    } else {
+        without_scheme
+    };
+
+    // split host and database
+    let parts: Vec<&str> = after_auth.splitn(2, '/').collect();
+    let host_part = parts.first().unwrap_or(&"");
+    let host = host_part.split(':').next().unwrap_or("localhost");
+    let host = if host.is_empty() { "localhost" } else { host };
+
+    let database = parts
+        .get(1)
+        .map(|d| d.split('?').next().unwrap_or(d))
+        .unwrap_or(&"");
+    let database = if database.is_empty() {
+        "default"
+    } else {
+        database
+    };
+
+    (host.to_string(), database.to_string())
 }
 
 // turn schema rows into readable text for claude

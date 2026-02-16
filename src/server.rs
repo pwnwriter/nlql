@@ -1,10 +1,10 @@
 // http server mode - run nlql as an api
 
 use axum::{
+    Json, Router,
     extract::State,
     http::StatusCode,
     routing::{get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -87,7 +87,7 @@ async fn query(
     Json(req): Json<QueryRequest>,
 ) -> (StatusCode, Json<QueryResponse>) {
     // get claude ready
-    let claude = match Claude::new() {
+    let claude = match Claude::new(None) {
         Ok(c) => c,
         Err(e) => {
             return (

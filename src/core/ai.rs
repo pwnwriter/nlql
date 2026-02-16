@@ -35,12 +35,13 @@ struct Content {
 }
 
 impl Claude {
-    pub fn new() -> Result<Self, Error> {
-        // check common env var names for the api key
-        let api_key = std::env::var("ANTHROPIC_API_KEY")
-            .or_else(|_| std::env::var("CLAUDE_API_KEY"))
-            .or_else(|_| std::env::var("CLAUDE_KEY"))
-            .map_err(|_| Error::MissingApiKey)?;
+    pub fn new(api_key: Option<String>) -> Result<Self, Error> {
+        // use provided key or check common env var names
+        let api_key = api_key
+            .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+            .or_else(|| std::env::var("CLAUDE_API_KEY").ok())
+            .or_else(|| std::env::var("CLAUDE_KEY").ok())
+            .ok_or(Error::MissingApiKey)?;
 
         Ok(Self {
             client: reqwest::Client::new(),
@@ -86,8 +87,9 @@ Rules:
             .await?;
 
         if !response.status().is_success() {
+            let status = response.status();
             let error = response.text().await?;
-            return Err(Error::Claude(error));
+            return Err(Error::Claude(format!("{status}: {error}")));
         }
 
         let response: Response = response.json().await?;
