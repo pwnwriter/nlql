@@ -3,3 +3,4 @@
 .pgdata
 logfile
 .pg
+*.csv
