@@ -200,7 +200,7 @@ fn parse_connection_url(url: &str) -> (String, String) {
     let database = parts
         .get(1)
         .map(|d| d.split('?').next().unwrap_or(d))
-        .unwrap_or(&"");
+        .unwrap_or("");
     let database = if database.is_empty() {
         "default"
     } else {

@@ -29,39 +29,31 @@ fn copy_to_clipboard(text: &str) -> bool {
     use std::process::{Command, Stdio};
 
     // try pbcopy (macOS)
-    if let Ok(mut child) = Command::new("pbcopy").stdin(Stdio::piped()).spawn() {
-        if let Some(stdin) = child.stdin.as_mut() {
-            if stdin.write_all(text.as_bytes()).is_ok() {
+    if let Ok(mut child) = Command::new("pbcopy").stdin(Stdio::piped()).spawn()
+        && let Some(stdin) = child.stdin.as_mut()
+            && stdin.write_all(text.as_bytes()).is_ok() {
                 return child.wait().map(|s| s.success()).unwrap_or(false);
             }
-        }
-    }
 
     // try xclip (Linux)
     if let Ok(mut child) = Command::new("xclip")
         .args(["-selection", "clipboard"])
         .stdin(Stdio::piped())
         .spawn()
-    {
-        if let Some(stdin) = child.stdin.as_mut() {
-            if stdin.write_all(text.as_bytes()).is_ok() {
+        && let Some(stdin) = child.stdin.as_mut()
+            && stdin.write_all(text.as_bytes()).is_ok() {
                 return child.wait().map(|s| s.success()).unwrap_or(false);
             }
-        }
-    }
 
     // try xsel (Linux fallback)
     if let Ok(mut child) = Command::new("xsel")
         .args(["--clipboard", "--input"])
         .stdin(Stdio::piped())
         .spawn()
-    {
-        if let Some(stdin) = child.stdin.as_mut() {
-            if stdin.write_all(text.as_bytes()).is_ok() {
+        && let Some(stdin) = child.stdin.as_mut()
+            && stdin.write_all(text.as_bytes()).is_ok() {
                 return child.wait().map(|s| s.success()).unwrap_or(false);
             }
-        }
-    }
 
     false
 }
