@@ -11,7 +11,7 @@ use crate::tui::app::{App, LogLevel, Mode, Panel, Popup, RiskLevel};
 use crate::tui::ascii::NLQL_LOGO;
 use crate::tui::theme::ThemeKind;
 
-pub fn render(frame: &mut Frame, app: &App) {
+pub fn render(frame: &mut Frame, app: &mut App) {
     let theme = &app.theme;
 
     // clear with bg color
@@ -41,7 +41,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 }
 
-fn render_header(frame: &mut Frame, app: &App, area: Rect) {
+fn render_header(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = &app.theme;
 
     let block = Block::default()
@@ -115,7 +115,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(info, inner[1]);
 }
 
-fn render_content(frame: &mut Frame, app: &App, area: Rect) {
+fn render_content(frame: &mut Frame, app: &mut App, area: Rect) {
     // 2x2 grid
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -138,7 +138,7 @@ fn render_content(frame: &mut Frame, app: &App, area: Rect) {
     render_logs(frame, app, bottom_cols[1]);
 }
 
-fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
+fn render_footer(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = &app.theme;
 
     let parts = vec![
@@ -174,7 +174,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-fn render_prompt(frame: &mut Frame, app: &App, area: Rect) {
+fn render_prompt(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = &app.theme;
     let active = app.panel == Panel::Prompt;
 
@@ -247,7 +247,7 @@ fn render_prompt(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_sql(frame: &mut Frame, app: &App, area: Rect) {
+fn render_sql(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = &app.theme;
     let active = app.panel == Panel::Sql;
 
@@ -339,7 +339,7 @@ fn render_sql(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-fn render_results(frame: &mut Frame, app: &App, area: Rect) {
+fn render_results(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = &app.theme;
     let active = app.panel == Panel::Results;
 
@@ -360,12 +360,15 @@ fn render_results(frame: &mut Frame, app: &App, area: Rect) {
         .border_style(border_style)
         .style(theme.base());
 
+    // calculate available width (area - borders - padding)
+    let available_width = area.width.saturating_sub(4) as usize;
+
     let content = if app.reconnecting {
         vec![Line::styled("reconnecting...", theme.muted())]
     } else if let Some(err) = &app.error {
         vec![Line::styled(format!("error: {err}"), theme.error())]
     } else if let Some(result) = &app.result {
-        format_result(result, theme)
+        format_result(result, theme, available_width)
     } else {
         vec![Line::styled("run a query to see results", theme.muted())]
     };
@@ -373,13 +376,12 @@ fn render_results(frame: &mut Frame, app: &App, area: Rect) {
     let paragraph = Paragraph::new(content)
         .block(block)
         .style(theme.base())
-        .scroll((app.result_scroll as u16, 0))
-        .wrap(Wrap { trim: false });
+        .scroll((app.result_scroll as u16, 0));
 
     frame.render_widget(paragraph, area);
 }
 
-fn render_logs(frame: &mut Frame, app: &App, area: Rect) {
+fn render_logs(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = &app.theme;
     let active = app.panel == Panel::Logs;
 
@@ -449,7 +451,7 @@ fn render_logs(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-fn render_theme_popup(frame: &mut Frame, app: &App) {
+fn render_theme_popup(frame: &mut Frame, app: &mut App) {
     let theme = &app.theme;
     let area = centered_rect(40, 70, frame.area());
 
@@ -496,7 +498,7 @@ fn render_theme_popup(frame: &mut Frame, app: &App) {
     frame.render_widget(paragraph, area);
 }
 
-fn render_confirm_popup(frame: &mut Frame, app: &App) {
+fn render_confirm_popup(frame: &mut Frame, app: &mut App) {
     let theme = &app.theme;
     let area = centered_rect(70, 50, frame.area());
 
@@ -536,7 +538,7 @@ fn render_confirm_popup(frame: &mut Frame, app: &App) {
     frame.render_widget(paragraph, area);
 }
 
-fn render_connection_popup(frame: &mut Frame, app: &App) {
+fn render_connection_popup(frame: &mut Frame, app: &mut App) {
     let theme = &app.theme;
     let area = centered_rect(70, 30, frame.area());
 
@@ -607,6 +609,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 fn format_result(
     result: &crate::core::QueryResult,
     theme: &crate::tui::theme::Theme,
+    available_width: usize,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
@@ -615,21 +618,46 @@ fn format_result(
         return lines;
     }
 
-    // calculate column widths
+    let num_cols = result.columns.len();
+    if num_cols == 0 {
+        return lines;
+    }
+
+    // calculate ideal column widths based on content
     let mut widths: Vec<usize> = result.columns.iter().map(|c| c.len()).collect();
     for row in &result.rows {
         for (i, val) in row.iter().enumerate() {
-            let len = format_value(val).len();
-            if len > widths[i] {
-                widths[i] = len;
+            if i < widths.len() {
+                let len = format_value(val).len();
+                if len > widths[i] {
+                    widths[i] = len;
+                }
             }
         }
     }
 
-    // cap widths
+    // calculate total width needed (columns + 1 space between each)
+    let spacing = num_cols.saturating_sub(1); // spaces between columns
+    let total_needed: usize = widths.iter().sum::<usize>() + spacing;
+
+    // if too wide, shrink columns proportionally
+    if total_needed > available_width && available_width > spacing {
+        let content_width = available_width - spacing;
+        let total_content: usize = widths.iter().sum();
+
+        if total_content > 0 {
+            // shrink proportionally, with minimum width of 4
+            for w in &mut widths {
+                *w = (*w * content_width / total_content).max(4);
+            }
+        }
+    }
+
+    // cap individual columns at reasonable max
+    let max_col_width = (available_width / num_cols).max(8).min(30);
     for w in &mut widths {
-        if *w > 25 {
-            *w = 25;
+        if *w > max_col_width {
+            *w = max_col_width;
         }
     }
 
@@ -639,17 +667,32 @@ fn format_result(
         .iter()
         .enumerate()
         .flat_map(|(i, c)| {
-            let s = format!("{:width$}", c, width = widths[i]);
-            vec![
-                Span::styled(s, ratatui::style::Style::default().fg(theme.accent)),
-                Span::raw("  "),
-            ]
+            let w = widths.get(i).copied().unwrap_or(10);
+            let s = truncate_str(c, w);
+            let mut spans = vec![Span::styled(
+                format!("{:width$}", s, width = w),
+                ratatui::style::Style::default().fg(theme.accent),
+            )];
+            if i < num_cols - 1 {
+                spans.push(Span::raw(" "));
+            }
+            spans
         })
         .collect();
     lines.push(Line::from(header));
 
     // separator
-    let sep: String = widths.iter().map(|w| "-".repeat(*w + 2)).collect();
+    let sep: String = widths
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            let mut s = "-".repeat(*w);
+            if i < num_cols - 1 {
+                s.push(' ');
+            }
+            s
+        })
+        .collect();
     lines.push(Line::styled(
         sep,
         ratatui::style::Style::default().fg(theme.border),
@@ -661,19 +704,30 @@ fn format_result(
             .iter()
             .enumerate()
             .flat_map(|(i, v)| {
+                let w = widths.get(i).copied().unwrap_or(10);
                 let s = format_value(v);
-                let s = if s.len() > 25 {
-                    format!("{}...", &s[..22])
-                } else {
-                    format!("{:width$}", s, width = widths[i])
-                };
-                vec![Span::raw(s), Span::raw("  ")]
+                let s = truncate_str(&s, w);
+                let mut spans = vec![Span::raw(format!("{:width$}", s, width = w))];
+                if i < num_cols - 1 {
+                    spans.push(Span::raw(" "));
+                }
+                spans
             })
             .collect();
         lines.push(Line::from(cells));
     }
 
     lines
+}
+
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else if max_len > 3 {
+        format!("{}...", &s[..max_len - 3])
+    } else {
+        s[..max_len].to_string()
+    }
 }
 
 fn format_value(val: &serde_json::Value) -> String {

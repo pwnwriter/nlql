@@ -1,5 +1,7 @@
 // error types with pretty diagnostics
 
+#![allow(unused_assignments)]
+
 use miette::Diagnostic;
 use thiserror::Error;
 
@@ -12,19 +14,22 @@ pub enum Error {
     )]
     Database(#[from] sqlx::Error),
 
-    #[error("claude api failed")]
+    #[error("ai api failed: {0}")]
     #[diagnostic(
-        code(nlql::ai::claude),
+        code(nlql::ai::error),
         help("check your api key and network connection")
     )]
-    Claude(String),
+    Ai(String),
 
-    #[error("no api key found")]
+    #[error("no api key found for {provider}")]
     #[diagnostic(
         code(nlql::ai::no_key),
-        help("set ANTHROPIC_API_KEY or CLAUDE_API_KEY environment variable")
+        help("set {env_var} environment variable or use --api-key")
     )]
-    MissingApiKey,
+    MissingApiKey {
+        provider: &'static str,
+        env_var: &'static str,
+    },
 
     #[error("http request failed")]
     #[diagnostic(code(nlql::http))]

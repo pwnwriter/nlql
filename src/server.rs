@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
 use crate::core::QueryResult;
-use crate::{Claude, Db, Error, Safety};
+use crate::{Ai, Db, Error, Provider, Safety};
 
 struct AppState {
     db: Db,
@@ -21,6 +21,8 @@ struct AppState {
 #[derive(Deserialize)]
 struct QueryRequest {
     prompt: String,
+    #[serde(default)]
+    provider: Option<String>,
     #[serde(default)]
     dry_run: bool,
     #[serde(default)]
@@ -86,8 +88,15 @@ async fn query(
     State(state): State<Arc<AppState>>,
     Json(req): Json<QueryRequest>,
 ) -> (StatusCode, Json<QueryResponse>) {
-    // get claude ready
-    let claude = match Claude::new(None) {
+    // parse provider (default to claude)
+    let provider = req
+        .provider
+        .as_deref()
+        .map(|s| s.parse().unwrap_or(Provider::Claude))
+        .unwrap_or(Provider::Claude);
+
+    // get ai ready
+    let ai = match Ai::new(provider, None) {
         Ok(c) => c,
         Err(e) => {
             return (
@@ -103,7 +112,7 @@ async fn query(
     };
 
     // generate the sql
-    let sql = match claude.generate_sql(&req.prompt, &state.schema).await {
+    let sql = match ai.generate_sql(&req.prompt, &state.schema).await {
         Ok(s) => s,
         Err(e) => {
             return (

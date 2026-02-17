@@ -497,6 +497,8 @@ impl App {
         self.confidence = Some(92); // TODO: get from AI response
         self.sql = Some(sql);
         self.sql_status = Some("pending".to_string());
+        self.explain_result = None; // clear old explain
+        self.show_explain = false;
         self.log(LogLevel::Ok, "generated sql".to_string());
     }
 

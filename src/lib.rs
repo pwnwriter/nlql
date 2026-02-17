@@ -6,6 +6,6 @@ mod error;
 mod server;
 pub mod tui;
 
-pub use core::{Claude, Db, QueryResult, Safety};
+pub use core::{Ai, Db, Provider, QueryResult, Safety};
 pub use error::Error;
 pub use server::Server;

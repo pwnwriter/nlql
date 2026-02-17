@@ -1,7 +1,7 @@
 // command line interface
 
 use crate::tui::DbInfo;
-use crate::{Db, Server};
+use crate::{Db, Provider, Server};
 use clap::{Parser, Subcommand};
 use miette::Result;
 
@@ -12,8 +12,12 @@ struct Cli {
     #[arg(long, short, env = "DATABASE_URL", global = true)]
     db: Option<String>,
 
-    /// anthropic api key
-    #[arg(long, short = 'k', env = "ANTHROPIC_API_KEY", global = true)]
+    /// ai provider (claude, openai)
+    #[arg(long, short = 'p', default_value = "claude", global = true)]
+    provider: Provider,
+
+    /// api key for the ai provider
+    #[arg(long, short = 'k', global = true)]
     api_key: Option<String>,
 
     /// ask for confirmation before running sql
@@ -63,7 +67,7 @@ pub async fn run() -> Result<()> {
                 url: db.clone(),
             };
 
-            Ok(crate::tui::run(db_conn, schema, db_info, cli.confirm, cli.api_key).await?)
+            Ok(crate::tui::run(db_conn, schema, db_info, cli.confirm, cli.provider, cli.api_key).await?)
         }
     }
 }

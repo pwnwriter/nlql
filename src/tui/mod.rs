@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 
-use crate::{Claude, Db, Error};
+use crate::{Ai, Db, Error, Provider};
 use app::{LogLevel, Mode};
 use event::{Action, handle_event, poll_event};
 
@@ -63,6 +63,7 @@ pub async fn run(
     schema: String,
     db_info: DbInfo,
     confirm: bool,
+    provider: Provider,
     api_key: Option<String>,
 ) -> Result<(), Error> {
     // setup terminal
@@ -73,7 +74,7 @@ pub async fn run(
     let mut terminal = Terminal::new(backend).map_err(|e| Error::Server(e.to_string()))?;
 
     // run app
-    let result = run_app(&mut terminal, db, schema, db_info, confirm, api_key).await;
+    let result = run_app(&mut terminal, db, schema, db_info, confirm, provider, api_key).await;
 
     // restore terminal
     disable_raw_mode().ok();
@@ -94,9 +95,10 @@ async fn run_app(
     schema: String,
     db_info: DbInfo,
     confirm: bool,
+    provider: Provider,
     api_key: Option<String>,
 ) -> Result<(), Error> {
-    let claude = Claude::new(api_key)?;
+    let ai = Ai::new(provider, api_key)?;
     let mut app = App::new(schema.clone(), db_info, confirm);
     let db = Arc::new(Mutex::new(db));
     let mut current_schema = schema;
@@ -116,7 +118,7 @@ async fn run_app(
 
         // render (cursor position is set in ui::render when in insert mode)
         terminal
-            .draw(|frame| ui::render(frame, &app))
+            .draw(|frame| ui::render(frame, &mut app))
             .map_err(|e| Error::Server(e.to_string()))?;
 
         // poll events
@@ -134,11 +136,11 @@ async fn run_app(
 
                     // render loading state
                     terminal
-                        .draw(|frame| ui::render(frame, &app))
+                        .draw(|frame| ui::render(frame, &mut app))
                         .map_err(|e| Error::Server(e.to_string()))?;
 
                     // generate sql
-                    match claude.generate_sql(&query, &current_schema).await {
+                    match ai.generate_sql(&query, &current_schema).await {
                         Ok(sql) => {
                             app.set_sql(sql.clone());
 
@@ -149,7 +151,7 @@ async fn run_app(
                             } else {
                                 // execute directly
                                 terminal
-                                    .draw(|frame| ui::render(frame, &app))
+                                    .draw(|frame| ui::render(frame, &mut app))
                                     .map_err(|e| Error::Server(e.to_string()))?;
 
                                 let db_guard = db.lock().await;
@@ -168,7 +170,7 @@ async fn run_app(
 
                         // render loading state
                         terminal
-                            .draw(|frame| ui::render(frame, &app))
+                            .draw(|frame| ui::render(frame, &mut app))
                             .map_err(|e| Error::Server(e.to_string()))?;
 
                         // execute
@@ -183,7 +185,36 @@ async fn run_app(
                     app.log(LogLevel::Info, "query cancelled".to_string());
                 }
                 Action::ToggleExplain => {
-                    // explain mode toggled in app
+                    // run EXPLAIN if we have SQL and toggled to show explain
+                    if app.show_explain && app.explain_result.is_none() {
+                        if let Some(sql) = &app.sql {
+                            let explain_sql = format!("EXPLAIN {}", sql);
+                            let db_guard = db.lock().await;
+                            match db_guard.execute(&explain_sql).await {
+                                Ok(result) => {
+                                    // format explain result as text
+                                    let explain_text = result
+                                        .rows
+                                        .iter()
+                                        .map(|row| {
+                                            row.iter()
+                                                .map(|v| match v {
+                                                    serde_json::Value::String(s) => s.clone(),
+                                                    _ => v.to_string(),
+                                                })
+                                                .collect::<Vec<_>>()
+                                                .join(" | ")
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("\n");
+                                    app.explain_result = Some(explain_text);
+                                }
+                                Err(e) => {
+                                    app.explain_result = Some(format!("EXPLAIN failed: {}", e));
+                                }
+                            }
+                        }
+                    }
                 }
                 Action::CopySql => {
                     if let Some(sql) = app.copy_sql() {
@@ -228,7 +259,7 @@ async fn run_app(
 
                     // render reconnecting state
                     terminal
-                        .draw(|frame| ui::render(frame, &app))
+                        .draw(|frame| ui::render(frame, &mut app))
                         .map_err(|e| Error::Server(e.to_string()))?;
 
                     // try to connect
