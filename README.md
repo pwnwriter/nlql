@@ -2,29 +2,8 @@
 
 Talk to your database in plain english.
 
-> ⚠️ Work in progress
+<img width="1368" height="969" alt="Screenshot 2026-02-17 at 8 14 16 PM" src="https://github.com/user-attachments/assets/aa84422f-e7e2-4778-8334-92fae51fb29d" />
 
-## Usage
-
-```bash
-# set your api key
-export ANTHROPIC_API_KEY="sk-..."
-
-# ask your database a question
-nlql query "show all users" --db "postgres:///mydb"
-
-# just see the sql without running it
-nlql query "count orders by status" --db "postgres:///mydb" --dry-run
-
-# raw json output
-nlql query "top 5 orders by amount" --db "postgres:///mydb" --output raw
-
-# show schema
-nlql schema --db "postgres:///mydb"
-
-# run as http server
-nlql serve --db "postgres:///mydb" --port 3000
-```
 
 ## Development
 
