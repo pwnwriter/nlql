@@ -22,19 +22,14 @@ jobs:
       - name: setup nix cache
         uses: DeterminateSystems/magic-nix-cache-action@main
 
-      - name: setup rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
       - name: check flake
         run: nix flake check
 
       - name: build
-        run: cargo build
+        run: nix build
 
-      - name: test
-        run: cargo test
+      - name: run
+        run: nix run . -- -h
 
       - name: clippy
         run: cargo clippy -- -D warnings
