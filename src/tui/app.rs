@@ -1,7 +1,7 @@
 // app state for the tui
 
 use crate::core::QueryResult;
-use crate::tui::theme::{Theme, ThemeKind};
+use crate::tui::theme::{Theme, ThemeKind, detect_theme};
 use crate::Provider;
 use std::time::Instant;
 
@@ -246,7 +246,7 @@ pub struct App {
 
 impl App {
     pub fn new(schema: String, db_info: DbInfo, confirm_before_run: bool) -> Self {
-        let theme_kind = ThemeKind::CatppuccinMocha;
+        let theme_kind = detect_theme();
         let connection_input = db_info.url.clone();
 
         let mut app = Self {
@@ -330,7 +330,7 @@ impl App {
 
     /// Create app in setup mode (no database connection yet)
     pub fn new_setup() -> Self {
-        let theme_kind = ThemeKind::CatppuccinMocha;
+        let theme_kind = detect_theme();
 
         Self {
             running: true,

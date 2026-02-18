@@ -24,4 +24,5 @@ clap = { version = "4.5.58", features = ["derive", "env"] }
 ratatui = "0.29"
 crossterm = "0.28"
 chrono = "0.4"
+terminal-light = "1.4"
 

@@ -2,6 +2,15 @@
 
 use ratatui::style::{Color, Modifier, Style};
 
+/// Detect if terminal is using a light or dark theme
+/// Returns the appropriate default theme
+pub fn detect_theme() -> ThemeKind {
+    match terminal_light::luma() {
+        Ok(luma) if luma > 0.5 => ThemeKind::RosePineDawn, // light terminal
+        _ => ThemeKind::CatppuccinMocha,                    // dark terminal (default)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeKind {
     // default themes
