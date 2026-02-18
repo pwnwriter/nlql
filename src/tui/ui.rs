@@ -37,6 +37,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Popup::Themes => render_theme_popup(frame, app),
         Popup::Confirm => render_confirm_popup(frame, app),
         Popup::Connection => render_connection_popup(frame, app),
+        Popup::SetupDbType => render_setup_db_type_popup(frame, app),
+        Popup::SetupDbDetails => render_setup_db_details_popup(frame, app),
+        Popup::SetupProvider => render_setup_provider_popup(frame, app),
+        Popup::SetupApiKey => render_setup_api_key_popup(frame, app),
         Popup::None => {}
     }
 }
@@ -116,6 +120,17 @@ fn render_header(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn render_content(frame: &mut Frame, app: &mut App, area: Rect) {
+    if app.fullscreen {
+        // render only the active panel in fullscreen
+        match app.panel {
+            Panel::Prompt => render_prompt(frame, app, area),
+            Panel::Sql => render_sql(frame, app, area),
+            Panel::Results => render_results(frame, app, area),
+            Panel::Logs => render_logs(frame, app, area),
+        }
+        return;
+    }
+
     // 2x2 grid
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -141,7 +156,7 @@ fn render_content(frame: &mut Frame, app: &mut App, area: Rect) {
 fn render_footer(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = &app.theme;
 
-    let parts = vec![
+    let mut parts = vec![
         Span::styled(" Enter ", theme.base().bg(theme.accent).fg(theme.bg)),
         Span::styled(" Run ", theme.muted()),
         Span::styled("| ", theme.border()),
@@ -152,6 +167,17 @@ fn render_footer(frame: &mut Frame, app: &mut App, area: Rect) {
         Span::styled("| ", theme.border()),
         Span::styled("e ", theme.accent()),
         Span::styled("Explain ", theme.muted()),
+        Span::styled("| ", theme.border()),
+        Span::styled("f ", theme.accent()),
+    ];
+
+    if app.fullscreen {
+        parts.push(Span::styled("Exit Full ", theme.warning()));
+    } else {
+        parts.push(Span::styled("Full ", theme.muted()));
+    }
+
+    parts.extend([
         Span::styled("| ", theme.border()),
         Span::styled("x ", theme.accent()),
         Span::styled("Export ", theme.muted()),
@@ -164,7 +190,7 @@ fn render_footer(frame: &mut Frame, app: &mut App, area: Rect) {
         Span::styled("| ", theme.border()),
         Span::styled("q ", theme.accent()),
         Span::styled("Quit ", theme.muted()),
-    ];
+    ]);
 
     let line = Line::from(parts);
     let paragraph = Paragraph::new(line)
@@ -580,6 +606,351 @@ fn render_connection_popup(frame: &mut Frame, app: &mut App) {
     });
     let cursor_x = inner.x + app.connection_cursor as u16;
     let cursor_y = inner.y + 2; // line 3 (0-indexed: database url, empty, input)
+
+    if cursor_x < inner.right() {
+        frame.set_cursor_position((cursor_x, cursor_y));
+    }
+}
+
+fn render_setup_db_type_popup(frame: &mut Frame, app: &mut App) {
+    let theme = &app.theme;
+    let area = centered_rect(50, 40, frame.area());
+
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(Span::styled(" nlql setup - database type ", theme.title()))
+        .borders(Borders::ALL)
+        .border_style(theme.accent())
+        .style(theme.base());
+
+    use crate::tui::app::DbType;
+
+    let mut lines = vec![
+        Line::styled("select your database type:", theme.muted()),
+        Line::from(""),
+    ];
+
+    for (i, db_type) in DbType::ALL.iter().enumerate() {
+        let is_selected = i == app.setup_db_type_index;
+        if is_selected {
+            lines.push(Line::from(vec![
+                Span::styled(" > ", theme.accent()),
+                Span::styled(db_type.name(), theme.selected().fg(theme.accent)),
+            ]));
+        } else {
+            lines.push(Line::from(vec![Span::styled(
+                format!("   {}", db_type.name()),
+                theme.base(),
+            )]));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("j/k ", theme.accent()),
+        Span::styled("navigate  ", theme.muted()),
+        Span::styled("enter ", theme.accent()),
+        Span::styled("select  ", theme.muted()),
+        Span::styled("esc ", theme.accent()),
+        Span::styled("quit", theme.muted()),
+    ]));
+
+    let paragraph = Paragraph::new(lines).block(block).style(theme.base());
+    frame.render_widget(paragraph, area);
+}
+
+fn render_setup_db_details_popup(frame: &mut Frame, app: &mut App) {
+    use crate::tui::app::DbType;
+
+    match app.setup_db_type {
+        DbType::SQLite => render_setup_sqlite_popup(frame, app),
+        _ => render_setup_server_db_popup(frame, app),
+    }
+}
+
+fn render_setup_sqlite_popup(frame: &mut Frame, app: &mut App) {
+    let theme = &app.theme;
+    let area = centered_rect(70, 40, frame.area());
+
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(Span::styled(" nlql setup - sqlite ", theme.title()))
+        .borders(Borders::ALL)
+        .border_style(theme.accent())
+        .style(theme.base());
+
+    let mut lines = vec![
+        Line::styled("enter the path to your sqlite database:", theme.muted()),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("file: ", theme.accent()),
+            Span::raw(&app.setup_db_file),
+        ]),
+        Line::from(""),
+    ];
+
+    if let Some(err) = &app.setup_error {
+        lines.push(Line::styled(format!("error: {}", err), theme.error()));
+        lines.push(Line::from(""));
+    }
+
+    lines.push(Line::styled("examples:", theme.muted()));
+    lines.push(Line::styled("  ./mydata.db", theme.muted()));
+    lines.push(Line::styled("  /path/to/database.sqlite", theme.muted()));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("enter ", theme.accent()),
+        Span::styled("connect  ", theme.muted()),
+        Span::styled("esc ", theme.accent()),
+        Span::styled("back  ", theme.muted()),
+        Span::styled("ctrl+u ", theme.accent()),
+        Span::styled("clear", theme.muted()),
+    ]));
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .style(theme.base())
+        .wrap(Wrap { trim: false });
+
+    frame.render_widget(paragraph, area);
+
+    // cursor position
+    let inner = area.inner(ratatui::layout::Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    let cursor_x = inner.x + 6 + app.setup_db_file_cursor as u16; // "file: " = 6 chars
+    let cursor_y = inner.y + 2;
+
+    if cursor_x < inner.right() {
+        frame.set_cursor_position((cursor_x, cursor_y));
+    }
+}
+
+fn render_setup_server_db_popup(frame: &mut Frame, app: &mut App) {
+    let theme = &app.theme;
+    let area = centered_rect(70, 55, frame.area());
+
+    frame.render_widget(Clear, area);
+
+    let db_name = app.setup_db_type.name().to_lowercase();
+    let block = Block::default()
+        .title(Span::styled(
+            format!(" nlql setup - {} ", db_name),
+            theme.title(),
+        ))
+        .borders(Borders::ALL)
+        .border_style(theme.accent())
+        .style(theme.base());
+
+    let field_style = |field_idx: usize| {
+        if app.setup_db_field == field_idx {
+            theme.accent()
+        } else {
+            theme.muted()
+        }
+    };
+
+    let field_label = |field_idx: usize, label: &str| {
+        if app.setup_db_field == field_idx {
+            Span::styled(format!("> {}: ", label), theme.accent())
+        } else {
+            Span::styled(format!("  {}: ", label), theme.muted())
+        }
+    };
+
+    let masked_pass: String = "*".repeat(app.setup_db_pass.len());
+
+    let mut lines = vec![
+        Line::styled("enter connection details:", theme.muted()),
+        Line::styled("(tab/shift+tab to switch fields)", theme.muted()),
+        Line::from(""),
+        Line::from(vec![
+            field_label(0, "host"),
+            Span::styled(&app.setup_db_host, field_style(0)),
+        ]),
+        Line::from(vec![
+            field_label(1, "port"),
+            Span::styled(&app.setup_db_port, field_style(1)),
+        ]),
+        Line::from(vec![
+            field_label(2, "user"),
+            Span::styled(&app.setup_db_user, field_style(2)),
+        ]),
+        Line::from(vec![
+            field_label(3, "pass"),
+            Span::styled(&masked_pass, field_style(3)),
+        ]),
+        Line::from(vec![
+            field_label(4, "database"),
+            Span::styled(&app.setup_db_name, field_style(4)),
+        ]),
+        Line::from(""),
+    ];
+
+    if let Some(err) = &app.setup_error {
+        lines.push(Line::styled(format!("error: {}", err), theme.error()));
+        lines.push(Line::from(""));
+    }
+
+    lines.push(Line::from(vec![
+        Span::styled("tab ", theme.accent()),
+        Span::styled("next  ", theme.muted()),
+        Span::styled("shift+tab ", theme.accent()),
+        Span::styled("prev  ", theme.muted()),
+        Span::styled("enter ", theme.accent()),
+        Span::styled("connect", theme.muted()),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("esc ", theme.accent()),
+        Span::styled("back  ", theme.muted()),
+        Span::styled("ctrl+u ", theme.accent()),
+        Span::styled("clear field", theme.muted()),
+    ]));
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .style(theme.base())
+        .wrap(Wrap { trim: false });
+
+    frame.render_widget(paragraph, area);
+
+    // cursor position based on active field
+    let inner = area.inner(ratatui::layout::Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+
+    let labels = ["host", "port", "user", "pass", "database"];
+    let label_len = labels[app.setup_db_field].len() + 4; // "> " + ": "
+    let cursor_offset = app.setup_db_get_cursor() as u16;
+    let cursor_x = inner.x + label_len as u16 + cursor_offset;
+    let cursor_y = inner.y + 3 + app.setup_db_field as u16; // 3 = header lines
+
+    if cursor_x < inner.right() && cursor_y < inner.bottom() {
+        frame.set_cursor_position((cursor_x, cursor_y));
+    }
+}
+
+fn render_setup_provider_popup(frame: &mut Frame, app: &mut App) {
+    let theme = &app.theme;
+    let area = centered_rect(50, 40, frame.area());
+
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(Span::styled(" nlql setup - ai provider ", theme.title()))
+        .borders(Borders::ALL)
+        .border_style(theme.accent())
+        .style(theme.base());
+
+    let providers = ["Claude (Anthropic)", "OpenAI (GPT-4)"];
+
+    let mut lines = vec![
+        Line::styled("select your ai provider:", theme.muted()),
+        Line::from(""),
+    ];
+
+    for (i, provider) in providers.iter().enumerate() {
+        let is_selected = i == app.setup_provider_index;
+        if is_selected {
+            lines.push(Line::from(vec![
+                Span::styled(" > ", theme.accent()),
+                Span::styled(*provider, theme.selected().fg(theme.accent)),
+            ]));
+        } else {
+            lines.push(Line::from(vec![Span::styled(
+                format!("   {}", provider),
+                theme.base(),
+            )]));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("j/k ", theme.accent()),
+        Span::styled("navigate  ", theme.muted()),
+        Span::styled("enter ", theme.accent()),
+        Span::styled("select  ", theme.muted()),
+        Span::styled("esc ", theme.accent()),
+        Span::styled("quit", theme.muted()),
+    ]));
+
+    let paragraph = Paragraph::new(lines).block(block).style(theme.base());
+    frame.render_widget(paragraph, area);
+}
+
+fn render_setup_api_key_popup(frame: &mut Frame, app: &mut App) {
+    let theme = &app.theme;
+    let area = centered_rect(70, 45, frame.area());
+
+    frame.render_widget(Clear, area);
+
+    let provider_name = match app.setup_provider {
+        crate::Provider::Claude => "claude",
+        crate::Provider::OpenAI => "openai",
+    };
+
+    let block = Block::default()
+        .title(Span::styled(
+            format!(" nlql setup - {} api key ", provider_name),
+            theme.title(),
+        ))
+        .borders(Borders::ALL)
+        .border_style(theme.accent())
+        .style(theme.base());
+
+    // mask the api key
+    let masked: String = "*".repeat(app.setup_api_key_input.len());
+
+    let mut lines = vec![
+        Line::styled(format!("enter your {} api key:", provider_name), theme.muted()),
+        Line::from(""),
+        Line::raw(&masked),
+        Line::from(""),
+    ];
+
+    // show error if any
+    if let Some(err) = &app.setup_error {
+        lines.push(Line::styled(format!("error: {}", err), theme.error()));
+        lines.push(Line::from(""));
+    }
+
+    let env_var = match app.setup_provider {
+        crate::Provider::Claude => "ANTHROPIC_API_KEY",
+        crate::Provider::OpenAI => "OPENAI_API_KEY",
+    };
+
+    lines.push(Line::styled(
+        format!("tip: set {} env var to skip this step", env_var),
+        theme.muted(),
+    ));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("enter ", theme.accent()),
+        Span::styled("continue  ", theme.muted()),
+        Span::styled("esc ", theme.accent()),
+        Span::styled("quit  ", theme.muted()),
+        Span::styled("ctrl+u ", theme.accent()),
+        Span::styled("clear", theme.muted()),
+    ]));
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .style(theme.base())
+        .wrap(Wrap { trim: false });
+
+    frame.render_widget(paragraph, area);
+
+    // set cursor position
+    let inner = area.inner(ratatui::layout::Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    let cursor_x = inner.x + app.setup_api_key_cursor as u16;
+    let cursor_y = inner.y + 2;
 
     if cursor_x < inner.right() {
         frame.set_cursor_position((cursor_x, cursor_y));

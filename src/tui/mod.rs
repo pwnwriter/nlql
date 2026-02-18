@@ -59,9 +59,9 @@ fn copy_to_clipboard(text: &str) -> bool {
 }
 
 pub async fn run(
-    db: Db,
-    schema: String,
-    db_info: DbInfo,
+    db: Option<Db>,
+    schema: Option<String>,
+    db_info: Option<DbInfo>,
     confirm: bool,
     provider: Provider,
     api_key: Option<String>,
@@ -91,17 +91,36 @@ pub async fn run(
 
 async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    db: Db,
-    schema: String,
-    db_info: DbInfo,
+    db: Option<Db>,
+    schema: Option<String>,
+    db_info: Option<DbInfo>,
     confirm: bool,
     provider: Provider,
     api_key: Option<String>,
 ) -> Result<(), Error> {
-    let ai = Ai::new(provider, api_key)?;
-    let mut app = App::new(schema.clone(), db_info, confirm);
-    let db = Arc::new(Mutex::new(db));
-    let mut current_schema = schema;
+    // determine if we're in setup mode
+    let setup_mode = db.is_none();
+
+    // create app state
+    let mut app = if setup_mode {
+        App::new_setup()
+    } else {
+        App::new(
+            schema.clone().unwrap_or_default(),
+            db_info.clone().unwrap(),
+            confirm,
+        )
+    };
+
+    // these will be initialized after setup or immediately if db provided
+    let mut ai: Option<Ai> = if !setup_mode {
+        Some(Ai::new(provider, api_key.clone())?)
+    } else {
+        None
+    };
+
+    let db_arc: Arc<Mutex<Option<Db>>> = Arc::new(Mutex::new(db));
+    let mut current_schema = schema.unwrap_or_default();
 
     let mut last_mode = app.mode;
 
@@ -128,40 +147,45 @@ async fn run_app(
             match handle_event(&mut app, event) {
                 Action::Quit => break,
                 Action::Submit(query) => {
-                    app.loading = true;
-                    app.log(
-                        LogLevel::Info,
-                        format!("processing: {}", query.lines().next().unwrap_or(&query)),
-                    );
+                    // only process if we have AI initialized
+                    if let Some(ref ai_client) = ai {
+                        app.loading = true;
+                        app.log(
+                            LogLevel::Info,
+                            format!("processing: {}", query.lines().next().unwrap_or(&query)),
+                        );
 
-                    // render loading state
-                    terminal
-                        .draw(|frame| ui::render(frame, &mut app))
-                        .map_err(|e| Error::Server(e.to_string()))?;
+                        // render loading state
+                        terminal
+                            .draw(|frame| ui::render(frame, &mut app))
+                            .map_err(|e| Error::Server(e.to_string()))?;
 
-                    // generate sql
-                    match ai.generate_sql(&query, &current_schema).await {
-                        Ok(sql) => {
-                            app.set_sql(sql.clone());
+                        // generate sql
+                        match ai_client.generate_sql(&query, &current_schema).await {
+                            Ok(sql) => {
+                                app.set_sql(sql.clone());
 
-                            if app.confirm_before_run {
-                                // show confirmation popup
-                                app.loading = false;
-                                app.show_confirm(sql);
-                            } else {
-                                // execute directly
-                                terminal
-                                    .draw(|frame| ui::render(frame, &mut app))
-                                    .map_err(|e| Error::Server(e.to_string()))?;
+                                if app.confirm_before_run {
+                                    // show confirmation popup
+                                    app.loading = false;
+                                    app.show_confirm(sql);
+                                } else {
+                                    // execute directly
+                                    terminal
+                                        .draw(|frame| ui::render(frame, &mut app))
+                                        .map_err(|e| Error::Server(e.to_string()))?;
 
-                                let db_guard = db.lock().await;
-                                match db_guard.execute(&sql).await {
-                                    Ok(result) => app.set_result(result),
-                                    Err(e) => app.set_error(e.to_string()),
+                                    let db_guard = db_arc.lock().await;
+                                    if let Some(ref db_conn) = *db_guard {
+                                        match db_conn.execute(&sql).await {
+                                            Ok(result) => app.set_result(result),
+                                            Err(e) => app.set_error(e.to_string()),
+                                        }
+                                    }
                                 }
                             }
+                            Err(e) => app.set_error(e.to_string()),
                         }
-                        Err(e) => app.set_error(e.to_string()),
                     }
                 }
                 Action::ConfirmSql => {
@@ -174,10 +198,12 @@ async fn run_app(
                             .map_err(|e| Error::Server(e.to_string()))?;
 
                         // execute
-                        let db_guard = db.lock().await;
-                        match db_guard.execute(&sql).await {
-                            Ok(result) => app.set_result(result),
-                            Err(e) => app.set_error(e.to_string()),
+                        let db_guard = db_arc.lock().await;
+                        if let Some(ref db_conn) = *db_guard {
+                            match db_conn.execute(&sql).await {
+                                Ok(result) => app.set_result(result),
+                                Err(e) => app.set_error(e.to_string()),
+                            }
                         }
                     }
                 }
@@ -189,28 +215,30 @@ async fn run_app(
                     if app.show_explain && app.explain_result.is_none() {
                         if let Some(sql) = &app.sql {
                             let explain_sql = format!("EXPLAIN {}", sql);
-                            let db_guard = db.lock().await;
-                            match db_guard.execute(&explain_sql).await {
-                                Ok(result) => {
-                                    // format explain result as text
-                                    let explain_text = result
-                                        .rows
-                                        .iter()
-                                        .map(|row| {
-                                            row.iter()
-                                                .map(|v| match v {
-                                                    serde_json::Value::String(s) => s.clone(),
-                                                    _ => v.to_string(),
-                                                })
-                                                .collect::<Vec<_>>()
-                                                .join(" | ")
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join("\n");
-                                    app.explain_result = Some(explain_text);
-                                }
-                                Err(e) => {
-                                    app.explain_result = Some(format!("EXPLAIN failed: {}", e));
+                            let db_guard = db_arc.lock().await;
+                            if let Some(ref db_conn) = *db_guard {
+                                match db_conn.execute(&explain_sql).await {
+                                    Ok(result) => {
+                                        // format explain result as text
+                                        let explain_text = result
+                                            .rows
+                                            .iter()
+                                            .map(|row| {
+                                                row.iter()
+                                                    .map(|v| match v {
+                                                        serde_json::Value::String(s) => s.clone(),
+                                                        _ => v.to_string(),
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                                    .join(" | ")
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join("\n");
+                                        app.explain_result = Some(explain_text);
+                                    }
+                                    Err(e) => {
+                                        app.explain_result = Some(format!("EXPLAIN failed: {}", e));
+                                    }
                                 }
                             }
                         }
@@ -276,11 +304,78 @@ async fn run_app(
                                 };
                                 current_schema = new_schema.clone();
                                 app.update_db_info(new_info, new_schema);
-                                *db.lock().await = new_db;
+                                *db_arc.lock().await = Some(new_db);
                             }
                             Err(e) => app.set_error(format!("schema error: {e}")),
                         },
                         Err(e) => app.set_error(format!("connection failed: {e}")),
+                    }
+                }
+                Action::SetupConnectDb(url) => {
+                    app.loading = true;
+                    app.log(LogLevel::Info, "connecting to database...".to_string());
+
+                    // render loading state
+                    terminal
+                        .draw(|frame| ui::render(frame, &mut app))
+                        .map_err(|e| Error::Server(e.to_string()))?;
+
+                    // try to connect
+                    match Db::connect(&url).await {
+                        Ok(new_db) => match new_db.schema().await {
+                            Ok(new_schema) => {
+                                let tables = new_schema.matches("TABLE ").count();
+                                let new_info = DbInfo {
+                                    dialect: new_db.dialect_name().to_string(),
+                                    host: new_db.host().to_string(),
+                                    database: new_db.database().to_string(),
+                                    tables,
+                                    url: url.clone(),
+                                };
+                                current_schema = new_schema;
+                                app.db_info = new_info;
+                                app.loading = false;
+                                // move to provider selection
+                                app.popup = app::Popup::SetupProvider;
+                                *db_arc.lock().await = Some(new_db);
+                                app.log(
+                                    LogLevel::Ok,
+                                    format!("connected to {}", app.db_info.dialect),
+                                );
+                            }
+                            Err(e) => {
+                                app.loading = false;
+                                app.setup_set_error(format!("schema error: {e}"));
+                            }
+                        },
+                        Err(e) => {
+                            app.loading = false;
+                            app.setup_set_error(format!("connection failed: {e}"));
+                        }
+                    }
+                }
+                Action::SetupComplete {
+                    provider: setup_provider,
+                    api_key: setup_api_key,
+                } => {
+                    // initialize AI client
+                    let api_key_from_env = setup_api_key.is_none();
+                    match Ai::new(setup_provider, setup_api_key) {
+                        Ok(ai_client) => {
+                            ai = Some(ai_client);
+                            // finish setup and enter normal mode
+                            app.finish_setup(app.db_info.clone(), &current_schema);
+                            app.confirm_before_run = confirm;
+                            if api_key_from_env {
+                                app.log(
+                                    LogLevel::Info,
+                                    "using api key from environment".to_string(),
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            app.setup_set_error(format!("ai init failed: {e}"));
+                        }
                     }
                 }
                 Action::None => {}

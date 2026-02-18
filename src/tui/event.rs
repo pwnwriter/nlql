@@ -4,6 +4,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use std::time::Duration;
 
 use crate::tui::app::{App, Mode, Popup};
+use crate::Provider;
 
 pub enum Action {
     None,
@@ -16,6 +17,12 @@ pub enum Action {
     CopySql,
     CopyOutput,
     ExportCsv,
+    // setup actions
+    SetupConnectDb(String),
+    SetupComplete {
+        provider: Provider,
+        api_key: Option<String>,
+    },
 }
 
 pub fn poll_event(timeout: Duration) -> std::io::Result<Option<Event>> {
@@ -47,6 +54,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         Popup::Themes => return handle_theme_popup(app, key),
         Popup::Confirm => return handle_confirm_popup(app, key),
         Popup::Connection => return handle_connection_popup(app, key),
+        Popup::SetupDbType => return handle_setup_db_type_popup(app, key),
+        Popup::SetupDbDetails => return handle_setup_db_details_popup(app, key),
+        Popup::SetupProvider => return handle_setup_provider_popup(app, key),
+        Popup::SetupApiKey => return handle_setup_api_key_popup(app, key),
         Popup::None => {}
     }
 
@@ -152,6 +163,203 @@ fn handle_connection_popup(app: &mut App, key: KeyEvent) -> Action {
     }
 }
 
+fn handle_setup_db_type_popup(app: &mut App, key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Esc => Action::Quit,
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.setup_db_type_down();
+            Action::None
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.setup_db_type_up();
+            Action::None
+        }
+        KeyCode::Enter => {
+            app.setup_db_type_select();
+            Action::None
+        }
+        _ => Action::None,
+    }
+}
+
+fn handle_setup_db_details_popup(app: &mut App, key: KeyEvent) -> Action {
+    // handle control keys
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return match key.code {
+            KeyCode::Char('a') => {
+                app.setup_db_move_start();
+                Action::None
+            }
+            KeyCode::Char('e') => {
+                app.setup_db_move_end();
+                Action::None
+            }
+            KeyCode::Char('u') => {
+                app.setup_db_clear_field();
+                Action::None
+            }
+            _ => Action::None,
+        };
+    }
+
+    // handle shift+tab for previous field
+    if key.modifiers.contains(KeyModifiers::SHIFT) && key.code == KeyCode::BackTab {
+        app.setup_db_prev_field();
+        return Action::None;
+    }
+
+    match key.code {
+        KeyCode::Esc => {
+            // go back to db type selection
+            app.popup = crate::tui::app::Popup::SetupDbType;
+            Action::None
+        }
+        KeyCode::Tab => {
+            app.setup_db_next_field();
+            Action::None
+        }
+        KeyCode::BackTab => {
+            app.setup_db_prev_field();
+            Action::None
+        }
+        KeyCode::Enter => {
+            if let Some(url) = app.setup_db_submit() {
+                Action::SetupConnectDb(url)
+            } else {
+                Action::None
+            }
+        }
+        KeyCode::Char(c) => {
+            app.setup_db_insert_char(c);
+            Action::None
+        }
+        KeyCode::Backspace => {
+            app.setup_db_delete_char();
+            Action::None
+        }
+        KeyCode::Delete => {
+            app.setup_db_delete_char_forward();
+            Action::None
+        }
+        KeyCode::Left => {
+            app.setup_db_move_left();
+            Action::None
+        }
+        KeyCode::Right => {
+            app.setup_db_move_right();
+            Action::None
+        }
+        KeyCode::Home => {
+            app.setup_db_move_start();
+            Action::None
+        }
+        KeyCode::End => {
+            app.setup_db_move_end();
+            Action::None
+        }
+        _ => Action::None,
+    }
+}
+
+fn handle_setup_provider_popup(app: &mut App, key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Esc => Action::Quit,
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.setup_provider_down();
+            Action::None
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.setup_provider_up();
+            Action::None
+        }
+        KeyCode::Enter => {
+            // check if api key is already in env
+            let has_env_key = match app.setup_provider {
+                Provider::Claude => {
+                    std::env::var("ANTHROPIC_API_KEY").is_ok()
+                        || std::env::var("CLAUDE_API_KEY").is_ok()
+                }
+                Provider::OpenAI => std::env::var("OPENAI_API_KEY").is_ok(),
+            };
+
+            if has_env_key {
+                // skip api key popup, complete setup
+                Action::SetupComplete {
+                    provider: app.setup_provider,
+                    api_key: None, // will be read from env
+                }
+            } else {
+                app.setup_provider_select();
+                Action::None
+            }
+        }
+        _ => Action::None,
+    }
+}
+
+fn handle_setup_api_key_popup(app: &mut App, key: KeyEvent) -> Action {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return match key.code {
+            KeyCode::Char('a') => {
+                app.setup_api_key_move_start();
+                Action::None
+            }
+            KeyCode::Char('e') => {
+                app.setup_api_key_move_end();
+                Action::None
+            }
+            KeyCode::Char('u') => {
+                app.setup_api_key_clear();
+                Action::None
+            }
+            _ => Action::None,
+        };
+    }
+
+    match key.code {
+        KeyCode::Esc => Action::Quit,
+        KeyCode::Enter => {
+            if let Some(api_key) = app.setup_api_key_submit() {
+                Action::SetupComplete {
+                    provider: app.setup_provider,
+                    api_key: Some(api_key),
+                }
+            } else {
+                Action::None
+            }
+        }
+        KeyCode::Char(c) => {
+            app.setup_api_key_insert_char(c);
+            Action::None
+        }
+        KeyCode::Backspace => {
+            app.setup_api_key_delete_char();
+            Action::None
+        }
+        KeyCode::Delete => {
+            app.setup_api_key_delete_char_forward();
+            Action::None
+        }
+        KeyCode::Left => {
+            app.setup_api_key_move_left();
+            Action::None
+        }
+        KeyCode::Right => {
+            app.setup_api_key_move_right();
+            Action::None
+        }
+        KeyCode::Home => {
+            app.setup_api_key_move_start();
+            Action::None
+        }
+        KeyCode::End => {
+            app.setup_api_key_move_end();
+            Action::None
+        }
+        _ => Action::None,
+    }
+}
+
 fn handle_normal_key(app: &mut App, key: KeyEvent) -> Action {
     match key.code {
         // quit
@@ -187,6 +395,12 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) -> Action {
         // theme popup
         KeyCode::Char('t') => {
             app.open_theme_popup();
+            Action::None
+        }
+
+        // fullscreen toggle
+        KeyCode::Char('f') => {
+            app.toggle_fullscreen();
             Action::None
         }
 
